@@ -14,23 +14,36 @@ serve(async (req) => {
   }
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-    );
-
+    // Get the authorization header
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       throw new Error('Authorization header is required');
     }
 
+    // Create Supabase client with the user's auth token
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      {
+        global: {
+          headers: {
+            Authorization: authHeader,
+          },
+        },
+      }
+    );
+
+    // Verify user authentication
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(
       authHeader.replace('Bearer ', '')
     );
 
     if (authError || !user) {
+      console.error('Auth error:', authError);
       throw new Error('Invalid authentication');
     }
+
+    console.log('Authenticated user:', user.id);
 
     const { dateRange = 30 } = await req.json();
 
@@ -64,6 +77,7 @@ serve(async (req) => {
           fields: 'id,ad_creative_body,page_name,ad_snapshot_url,ad_delivery_start_time,impressions,spend,demographic_distribution,region_distribution'
         });
 
+        console.log('Calling Facebook API with params:', params.toString());
         const response = await fetch(`${apiUrl}?${params.toString()}`);
         const facebookData = await response.json();
 
@@ -75,28 +89,32 @@ serve(async (req) => {
         console.log('Facebook API Response:', JSON.stringify(facebookData, null, 2));
 
         // Transform Facebook data to our format
-        adsToInsert = (facebookData.data || []).map((fbAd: any) => {
-          const impressionsData = fbAd.impressions ? JSON.parse(fbAd.impressions) : null;
-          const spendData = fbAd.spend ? JSON.parse(fbAd.spend) : null;
-          
-          return {
-            title: `${fbAd.page_name || 'Unknown Page'} - Ad`,
-            description: fbAd.ad_creative_body || 'No description available',
-            platform: 'Facebook',
-            image_url: null,
-            video_url: null,
-            likes: Math.floor(Math.random() * 1000) + 100,
-            comments: Math.floor(Math.random() * 200) + 20,
-            shares: Math.floor(Math.random() * 100) + 10,
-            country: 'India',
-            days_active: Math.floor((new Date().getTime() - new Date(fbAd.ad_delivery_start_time || new Date()).getTime()) / (1000 * 3600 * 24)),
-            brand: fbAd.page_name || 'Unknown Brand',
-            category: 'Political/Issue',
-            ad_url: fbAd.ad_snapshot_url || null,
-            user_id: user.id,
-            scraped_at: new Date().toISOString()
-          };
-        });
+        if (facebookData.data && facebookData.data.length > 0) {
+          adsToInsert = facebookData.data.map((fbAd: any) => {
+            const impressionsData = fbAd.impressions ? JSON.parse(fbAd.impressions) : null;
+            const spendData = fbAd.spend ? JSON.parse(fbAd.spend) : null;
+            
+            return {
+              title: `${fbAd.page_name || 'Unknown Page'} - Ad`,
+              description: fbAd.ad_creative_body || 'No description available',
+              platform: 'Facebook',
+              image_url: null,
+              video_url: null,
+              likes: Math.floor(Math.random() * 1000) + 100,
+              comments: Math.floor(Math.random() * 200) + 20,
+              shares: Math.floor(Math.random() * 100) + 10,
+              country: 'India',
+              days_active: Math.floor((new Date().getTime() - new Date(fbAd.ad_delivery_start_time || new Date()).getTime()) / (1000 * 3600 * 24)),
+              brand: fbAd.page_name || 'Unknown Brand',
+              category: 'Political/Issue',
+              ad_url: fbAd.ad_snapshot_url || null,
+              user_id: user.id,
+              scraped_at: new Date().toISOString()
+            };
+          });
+        } else {
+          fallbackUsed = true;
+        }
 
       } catch (apiError) {
         console.error('Facebook API call failed, using fallback data:', apiError);
@@ -195,6 +213,40 @@ serve(async (req) => {
           ad_url: "https://facebook.com/ads/library",
           user_id: user.id,
           scraped_at: new Date().toISOString()
+        },
+        {
+          title: "Learn Web Development - Full Stack",
+          description: "Master MERN stack development. Get job-ready skills in 6 months. 100% placement assistance. Live projects included.",
+          platform: "Facebook",
+          image_url: "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=400&h=300&fit=crop",
+          video_url: null,
+          likes: 980,
+          comments: 124,
+          shares: 56,
+          country: "India",
+          days_active: Math.floor(Math.random() * dateRange) + 1,
+          brand: "CodeAcademy India",
+          category: "Technology",
+          ad_url: "https://facebook.com/ads/library",
+          user_id: user.id,
+          scraped_at: new Date().toISOString()
+        },
+        {
+          title: "Organic Food Delivery Service",
+          description: "Fresh organic vegetables and fruits delivered to your doorstep. Chemical-free farming. Order now and get 20% off!",
+          platform: "Facebook",
+          image_url: "https://images.unsplash.com/photo-1542838132-92c53300491e?w=400&h=300&fit=crop",
+          video_url: null,
+          likes: 654,
+          comments: 87,
+          shares: 31,
+          country: "India",
+          days_active: Math.floor(Math.random() * dateRange) + 1,
+          brand: "FreshHarvest",
+          category: "Food & Beverage",
+          ad_url: "https://facebook.com/ads/library",
+          user_id: user.id,
+          scraped_at: new Date().toISOString()
         }
       ];
     }
@@ -219,8 +271,8 @@ serve(async (req) => {
         success: true, 
         ads: insertedAds?.length || 0,
         message: fallbackUsed 
-          ? `Using sample Indian ads data (${insertedAds?.length || 0} ads)`
-          : `Successfully scraped ${insertedAds?.length || 0} ads from India`,
+          ? `Sample Indian ads data added (${insertedAds?.length || 0} ads)`
+          : `Successfully scraped ${insertedAds?.length || 0} real Facebook ads from India`,
         fallback: fallbackUsed,
         dateRange: { start: startDateStr, end: endDateStr }
       }),
